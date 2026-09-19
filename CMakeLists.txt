@@ -36,6 +36,9 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(MYSTRAL_USE_DAWN "Use Dawn WebGPU implementation" ON)  # Default - best compatibility
 option(MYSTRAL_USE_WGPU "Use wgpu-native WebGPU implementation" OFF)  # Alternative - has iOS support
 
+# Canvas 2D (optional - Skia-backed implementation)
+option(MYSTRAL_USE_SKIA "Enable Skia-backed Canvas 2D rendering" ON)
+
 # Ray Tracing (optional - hardware RT via DXR/Vulkan/Metal)
 option(MYSTRAL_USE_RAYTRACING "Enable hardware ray tracing support" OFF)
 
@@ -622,6 +625,7 @@ endif()
 # All platforms now use olilarkin/skia-builder: https://github.com/olilarkin/skia-builder/releases
 # Structure: skia/build/include/include/core/...
 #            skia/build/{platform}-gpu/lib/Release/{arch}/libskia.a
+if(MYSTRAL_USE_SKIA)
 if(MYSTRAL_PLATFORM STREQUAL "ios")
     set(SKIA_DIR ${THIRD_PARTY_DIR}/skia-ios)
     # iOS Skia structure: skia-ios/{device,simulator}/build/...
@@ -705,6 +709,9 @@ else()
     else()
         message(STATUS "Skia not found - Canvas 2D support disabled. Run 'node scripts/download-deps.mjs --only skia' to enable.")
     endif()
+endif()
+else()
+    message(STATUS "Skia disabled (MYSTRAL_USE_SKIA=OFF) - Canvas 2D rendering disabled.")
 endif()
 
 # SWC (TypeScript transpiler)
