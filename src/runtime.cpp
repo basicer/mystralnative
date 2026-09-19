@@ -148,10 +148,10 @@ static void installCrashHandlers() {
 
 // Forward declaration for WebGPU bindings
 namespace webgpu {
-    bool initBindings(js::Engine* engine, void* wgpuInstance, void* wgpuDevice, void* wgpuQueue, void* wgpuSurface, uint32_t surfaceFormat, uint32_t width, uint32_t height, bool debug = false);
-    void setOffscreenTexture(void* texture, void* textureView);
-    void beginDawnFrame();
-    void endDawnFrame();
+bool initBindings(js::Engine* engine, void* wgpuInstance, void* wgpuDevice, void* wgpuQueue, void* wgpuSurface, uint32_t surfaceFormat, uint32_t width, uint32_t height, bool debug, Context* context);
+void setOffscreenTexture(void* texture, void* textureView);
+void beginDawnFrame();
+void endDawnFrame();
 }
 
 /**
@@ -444,7 +444,7 @@ public:
         // Set up WebGPU bindings in JS
         // For no-SDL mode, pass nullptr for surface (offscreen rendering uses texture directly)
         WGPUSurface surface = config_.noSdl ? nullptr : webgpu_->getSurface();
-        if (!webgpu::initBindings(jsEngine_.get(), webgpu_->getInstance(), webgpu_->getDevice(), webgpu_->getQueue(), surface, webgpu_->getPreferredFormat(), width_, height_, config_.debug)) {
+        if (!webgpu::initBindings(jsEngine_.get(), webgpu_->getInstance(), webgpu_->getDevice(), webgpu_->getQueue(), surface, webgpu_->getPreferredFormat(), width_, height_, config_.debug, webgpu_.get())) {
             std::cerr << "[Mystral] Failed to initialize WebGPU bindings" << std::endl;
             return false;
         }

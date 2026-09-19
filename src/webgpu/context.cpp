@@ -439,7 +439,11 @@ bool Context::createOffscreenTarget(uint32_t width, uint32_t height) {
     textureDesc.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopySrc;
     textureDesc.dimension = WGPUTextureDimension_2D;
     textureDesc.size = {width, height, 1};
-    textureDesc.format = (WGPUTextureFormat)preferredFormat_;
+    textureDesc.format = (WGPUTextureFormat)(canvasFormat_ ? canvasFormat_ : preferredFormat_);
+    std::vector<WGPUTextureFormat> viewFormats;
+    for (auto format : canvasViewFormats_) viewFormats.push_back((WGPUTextureFormat)format);
+    textureDesc.viewFormatCount = viewFormats.size();
+    textureDesc.viewFormats = viewFormats.data();
     textureDesc.mipLevelCount = 1;
     textureDesc.sampleCount = 1;
 
@@ -448,11 +452,16 @@ bool Context::createOffscreenTarget(uint32_t width, uint32_t height) {
         std::cerr << "[WebGPU] Failed to create offscreen texture" << std::endl;
         return false;
     }
+    if (offscreenTextureView_) {
+        wgpuTextureViewRelease((WGPUTextureView)offscreenTextureView_);
+        offscreenTextureView_ = nullptr;
+    }
+    if (offscreenTexture_) wgpuTextureRelease((WGPUTexture)offscreenTexture_);
     offscreenTexture_ = texture;
 
     // Create texture view
     WGPUTextureViewDescriptor viewDesc = {};
-    viewDesc.format = (WGPUTextureFormat)preferredFormat_;
+    viewDesc.format = (WGPUTextureFormat)(canvasFormat_ ? canvasFormat_ : preferredFormat_);
     viewDesc.dimension = WGPUTextureViewDimension_2D;
     viewDesc.baseMipLevel = 0;
     viewDesc.mipLevelCount = 1;
@@ -959,7 +968,11 @@ bool Context::configureSurface(uint32_t width, uint32_t height) {
     // Configure surface
     WGPUSurfaceConfiguration config = {};
     config.device = device_;
-    config.format = (WGPUTextureFormat)preferredFormat_;
+    config.format = (WGPUTextureFormat)(canvasFormat_ ? canvasFormat_ : preferredFormat_);
+    std::vector<WGPUTextureFormat> viewFormats;
+    for (auto format : canvasViewFormats_) viewFormats.push_back((WGPUTextureFormat)format);
+    config.viewFormatCount = viewFormats.size();
+    config.viewFormats = viewFormats.data();
     config.usage = WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopySrc;
     config.alphaMode = WGPUCompositeAlphaMode_Auto;
     config.width = width;
@@ -971,6 +984,13 @@ bool Context::configureSurface(uint32_t width, uint32_t height) {
 
     wgpuSurfaceCapabilitiesFreeMembers(capabilities);
     return true;
+}
+
+bool Context::configureCanvas(uint32_t format, const std::vector<uint32_t>& viewFormats) {
+    canvasFormat_ = format;
+    canvasViewFormats_ = viewFormats;
+    return headless_ ? createOffscreenTarget(surfaceWidth_, surfaceHeight_)
+                     : configureSurface(surfaceWidth_, surfaceHeight_);
 }
 
 void Context::resizeSurface(uint32_t width, uint32_t height) {
@@ -993,7 +1013,7 @@ void* Context::getCurrentTextureView() {
     }
 
     WGPUTextureViewDescriptor viewDesc = {};
-    viewDesc.format = (WGPUTextureFormat)preferredFormat_;
+    viewDesc.format = (WGPUTextureFormat)(canvasFormat_ ? canvasFormat_ : preferredFormat_);
     viewDesc.dimension = WGPUTextureViewDimension_2D;
     viewDesc.baseMipLevel = 0;
     viewDesc.mipLevelCount = 1;

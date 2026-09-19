@@ -19,6 +19,7 @@
  */
 
 #include "mystral/js/engine.h"
+#include "mystral/webgpu/context.h"
 #include <iostream>
 #include <vector>
 #include <unordered_map>
@@ -89,6 +90,7 @@ static WGPUQueue g_queue = nullptr;
 static WGPUSurface g_surface = nullptr;
 static WGPUInstance g_instance = nullptr;
 static js::Engine* g_engine = nullptr;
+static Context* g_context = nullptr;
 
 // Offscreen rendering support (for no-SDL mode)
 static WGPUTexture g_offscreenTexture = nullptr;
@@ -485,6 +487,33 @@ static uint32_t getCopyStride(js::JSValueHandle layout, const char* name) {
                                         : (uint32_t)g_engine->toNumber(value);
 }
 
+// Apply canvas configuration to the native surface or headless target.
+static bool configureCanvas(js::JSValueHandle descriptor) {
+    auto format = stringToFormat(g_engine->toString(g_engine->getProperty(descriptor, "format")));
+    std::vector<uint32_t> viewFormats;
+    auto formats = g_engine->getProperty(descriptor, "viewFormats");
+    if (!g_engine->isUndefined(formats)) {
+        auto length = (uint32_t)g_engine->toNumber(g_engine->getProperty(formats, "length"));
+        for (uint32_t i = 0; i < length; ++i) {
+            viewFormats.push_back(stringToFormat(g_engine->toString(g_engine->getPropertyIndex(formats, i))));
+        }
+    }
+    if (!g_context || !g_context->configureCanvas(format, viewFormats)) {
+        g_engine->throwException("Failed to configure canvas");
+        return false;
+    }
+    if (g_context->isHeadless()) {
+        g_offscreenTexture = (WGPUTexture)g_context->getOffscreenTexture();
+        g_offscreenTextureView = (WGPUTextureView)g_context->getOffscreenTextureView();
+    }
+    g_currentTexture = nullptr;
+    g_currentTextureView = nullptr;
+    g_currentViewSourceTexture = nullptr;
+    g_surfaceFormat = format;
+    g_contextConfigured = true;
+    return true;
+}
+
 /**
  * Get the current swapchain texture (or offscreen texture in no-SDL mode)
  */
@@ -516,7 +545,7 @@ static WGPUTexture getCurrentSwapchainTexture() {
 /**
  * Initialize WebGPU bindings in the JS engine
  */
-bool initBindings(js::Engine* engine, void* wgpuInstance, void* wgpuDevice, void* wgpuQueue, void* wgpuSurface, uint32_t surfaceFormat, uint32_t width, uint32_t height, bool debug) {
+bool initBindings(js::Engine* engine, void* wgpuInstance, void* wgpuDevice, void* wgpuQueue, void* wgpuSurface, uint32_t surfaceFormat, uint32_t width, uint32_t height, bool debug, Context* context) {
     if (!engine) {
         std::cerr << "[WebGPU] No JS engine provided for bindings" << std::endl;
         return false;
@@ -527,6 +556,7 @@ bool initBindings(js::Engine* engine, void* wgpuInstance, void* wgpuDevice, void
     g_verboseLogging = debug;
 
     g_engine = engine;
+    g_context = context;
     g_instance = (WGPUInstance)wgpuInstance;
     g_device = (WGPUDevice)wgpuDevice;
     g_queue = (WGPUQueue)wgpuQueue;
@@ -643,8 +673,7 @@ bool initBindings(js::Engine* engine, void* wgpuInstance, void* wgpuDevice, void
 
                     // Get format
                     std::string format = g_engine->toString(g_engine->getProperty(descriptor, "format"));
-                    g_surfaceFormat = stringToFormat(format);
-                    // Note: alphaMode and device are stored but surface is already configured
+                    if (!configureCanvas(descriptor)) return g_engine->newUndefined();
 
                     g_contextConfigured = true;
                     if (g_verboseLogging) std::cout << "[Canvas] Context configured with format: " << format << std::endl;
@@ -715,6 +744,12 @@ bool initBindings(js::Engine* engine, void* wgpuInstance, void* wgpuDevice, void
                             // Create texture view
                             WGPUTextureViewDescriptor viewDesc = {};
                             viewDesc.format = it->second.format;
+                            if (!args.empty() && !g_engine->isUndefined(args[0])) {
+                                auto format = g_engine->getProperty(args[0], "format");
+                                if (!g_engine->isUndefined(format)) {
+                                    viewDesc.format = stringToFormat(g_engine->toString(format));
+                                }
+                            }
                             viewDesc.dimension = WGPUTextureViewDimension_2D;
                             viewDesc.baseMipLevel = 0;
                             viewDesc.mipLevelCount = 1;
@@ -921,7 +956,7 @@ bool initBindings(js::Engine* engine, void* wgpuInstance, void* wgpuDevice, void
                                 }
                                 auto descriptor = args[0];
                                 std::string format = g_engine->toString(g_engine->getProperty(descriptor, "format"));
-                                g_surfaceFormat = stringToFormat(format);
+                                if (!configureCanvas(descriptor)) return g_engine->newUndefined();
                                 g_contextConfigured = true;
                                 if (g_verboseLogging) std::cout << "[Canvas] Offscreen context configured with format: " << format << std::endl;
                                 return g_engine->newUndefined();
@@ -986,6 +1021,12 @@ bool initBindings(js::Engine* engine, void* wgpuInstance, void* wgpuDevice, void
 
                                         WGPUTextureViewDescriptor viewDesc = {};
                                         viewDesc.format = it->second.format;
+                                        if (!a.empty() && !g_engine->isUndefined(a[0])) {
+                                            auto format = g_engine->getProperty(a[0], "format");
+                                            if (!g_engine->isUndefined(format)) {
+                                                viewDesc.format = stringToFormat(g_engine->toString(format));
+                                            }
+                                        }
                                         viewDesc.dimension = WGPUTextureViewDimension_2D;
                                         viewDesc.baseMipLevel = 0;
                                         viewDesc.mipLevelCount = 1;

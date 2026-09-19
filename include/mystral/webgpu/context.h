@@ -96,6 +96,9 @@ public:
      */
     bool configureSurface(uint32_t width, uint32_t height);
 
+    // Retain JavaScript canvas formats across surface resizes.
+    bool configureCanvas(uint32_t format, const std::vector<uint32_t>& viewFormats);
+
     /**
      * Resize the surface
      */
@@ -171,6 +174,8 @@ private:
     uint32_t surfaceWidth_ = 0;
     uint32_t surfaceHeight_ = 0;
     uint32_t preferredFormat_ = 0;  // WGPUTextureFormat
+    uint32_t canvasFormat_ = 0;
+    std::vector<uint32_t> canvasViewFormats_;
 
     bool initialized_ = false;
     bool hasIndirectFirstInstance_ = false;  // Whether INDIRECT_FIRST_INSTANCE feature is available
