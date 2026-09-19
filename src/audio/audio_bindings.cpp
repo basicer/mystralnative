@@ -346,12 +346,7 @@ void initializeAudioBindings(js::Engine* engine) {
     // Keep JS values in JS closures, avoiding captured frame-scoped engine handles.
     engine->eval(R"JS(
         globalThis.__mystralBindAudioSource = function(source) {
-            for (const [name, setter, convert] of [
-                ['buffer', source._setBuffer, value => value],
-                ['loop', source._setLoop, Boolean],
-                ['loopStart', source._setLoopStart, Number],
-                ['loopEnd', source._setLoopEnd, Number],
-            ]) {
+            const bind = function(name, setter, convert) {
                 let value = source[name];
                 Object.defineProperty(source, name, {
                     enumerable: true, configurable: true,
@@ -365,7 +360,11 @@ void initializeAudioBindings(js::Engine* engine) {
                         value = next;
                     },
                 });
-            }
+            };
+            bind('buffer', source._setBuffer, value => value);
+            bind('loop', source._setLoop, Boolean);
+            bind('loopStart', source._setLoopStart, Number);
+            bind('loopEnd', source._setLoopEnd, Number);
         };
     )JS",
                  "audio-source-properties.js");

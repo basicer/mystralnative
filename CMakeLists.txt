@@ -13,6 +13,7 @@ project(MystralNativeRuntime VERSION 0.1.6 LANGUAGES C CXX)
 option(MYSTRAL_USE_V8 "Use V8 JavaScript engine" OFF)
 option(MYSTRAL_USE_JSC "Use JavaScriptCore engine" OFF)
 option(MYSTRAL_USE_QUICKJS "Use QuickJS engine" ON)  # Default - simplest to start
+option(MYSTRAL_USE_HERMES "Use Hermes JavaScript engine" OFF)
 option(MYSTRAL_USE_SWC "Enable SWC TypeScript transpiler" ON)
 
 # V8 requires C++20, so use that if V8 is enabled, otherwise C++17
@@ -73,7 +74,7 @@ elseif(UNIX)
 endif()
 
 message(STATUS "Mystral Platform: ${MYSTRAL_PLATFORM}")
-message(STATUS "JS Engine: V8=${MYSTRAL_USE_V8} JSC=${MYSTRAL_USE_JSC} QuickJS=${MYSTRAL_USE_QUICKJS}")
+message(STATUS "JS Engine: V8=${MYSTRAL_USE_V8} JSC=${MYSTRAL_USE_JSC} QuickJS=${MYSTRAL_USE_QUICKJS} Hermes=${MYSTRAL_USE_HERMES}")
 message(STATUS "WebGPU: Dawn=${MYSTRAL_USE_DAWN} wgpu=${MYSTRAL_USE_WGPU}")
 
 # ============================================================================
@@ -146,6 +147,50 @@ else()
                 message(STATUS "Found SDL3 for Android: ${SDL3_LIBRARY}")
             endif()
         endif()
+    endif()
+endif()
+
+# Hermes (built from source, like QuickJS)
+if(MYSTRAL_USE_HERMES)
+    set(HERMES_DIR ${THIRD_PARTY_DIR}/hermes)
+    if(EXISTS ${HERMES_DIR})
+        file(GLOB HERMES_SUBDIRS ${HERMES_DIR}/hermes-*)
+        if(HERMES_SUBDIRS)
+            list(GET HERMES_SUBDIRS 0 HERMES_ACTUAL_DIR)
+        else()
+            set(HERMES_ACTUAL_DIR ${HERMES_DIR})
+        endif()
+        if(EXISTS ${HERMES_ACTUAL_DIR}/CMakeLists.txt)
+            # static_h requires a single-config build type; do not override an
+            # explicit caller choice.
+            if(NOT CMAKE_BUILD_TYPE)
+                set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+            endif()
+            # Hermes sets these directory-visible variables for its own
+            # build.  Preserve the parent project's language/linkage policy.
+            set(MYSTRAL_SAVED_CXX_STANDARD ${CMAKE_CXX_STANDARD})
+            set(MYSTRAL_SAVED_CXX_STANDARD_REQUIRED ${CMAKE_CXX_STANDARD_REQUIRED})
+            set(MYSTRAL_SAVED_BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS})
+            set(HERMES_BUILD_APPLE_FRAMEWORK OFF CACHE BOOL "" FORCE)
+            set(HERMES_BUILD_SHARED_JSI OFF CACHE BOOL "" FORCE)
+            set(HERMES_ENABLE_TEST_SUITE OFF CACHE BOOL "" FORCE)
+            set(HERMESVM_PLATFORM_LOGGING OFF CACHE BOOL "" FORCE)
+            set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+            add_subdirectory(${HERMES_ACTUAL_DIR} ${CMAKE_BINARY_DIR}/hermes-build EXCLUDE_FROM_ALL)
+            set(CMAKE_CXX_STANDARD ${MYSTRAL_SAVED_CXX_STANDARD})
+            set(CMAKE_CXX_STANDARD_REQUIRED ${MYSTRAL_SAVED_CXX_STANDARD_REQUIRED})
+            set(BUILD_SHARED_LIBS ${MYSTRAL_SAVED_BUILD_SHARED_LIBS} CACHE BOOL "" FORCE)
+            if(TARGET hermesapi)
+                add_compile_definitions(MYSTRAL_JS_HERMES)
+                message(STATUS "Building Hermes from source: ${HERMES_ACTUAL_DIR}")
+            else()
+                message(FATAL_ERROR "Hermes source did not define the hermesapi runtime target")
+            endif()
+        else()
+            message(FATAL_ERROR "Hermes CMakeLists.txt not found in ${HERMES_ACTUAL_DIR}")
+        endif()
+    else()
+        message(FATAL_ERROR "Hermes not found. Run 'node scripts/download-deps.mjs --only hermes' first.")
     endif()
 endif()
 
@@ -1063,10 +1108,12 @@ target_include_directories(mystral-runtime PRIVATE
 
 # Pass build configuration to source code
 # Determine JS engine name
-if(MYSTRAL_USE_V8)
-    set(MYSTRAL_JS_ENGINE_NAME "v8")
-elseif(MYSTRAL_USE_JSC)
+if(MYSTRAL_USE_HERMES)
+    set(MYSTRAL_JS_ENGINE_NAME "hermes")
+elseif(APPLE AND MYSTRAL_USE_JSC)
     set(MYSTRAL_JS_ENGINE_NAME "jsc")
+elseif(MYSTRAL_USE_V8)
+    set(MYSTRAL_JS_ENGINE_NAME "v8")
 else()
     set(MYSTRAL_JS_ENGINE_NAME "quickjs")
 endif()
@@ -1163,6 +1210,14 @@ if(MYSTRAL_USE_V8 AND TARGET v8::v8)
     elseif(V8_SYSTEM_LIBS)
         target_link_libraries(mystral-runtime PRIVATE ${V8_SYSTEM_LIBS})
     endif()
+endif()
+
+if(MYSTRAL_USE_HERMES AND TARGET hermesapi)
+    target_sources(mystral-runtime PRIVATE src/js/hermes_engine.cpp)
+    # static_h exposes the runtime as separate archives. hermescompiler is the
+    # aggregate archive that supplies Hermes' parser, bytecode, support, and
+    # LLVH implementation used by hermesapi/hermesVMRuntime.
+    target_link_libraries(mystral-runtime PRIVATE hermesapi hermesVMRuntime hermescompiler hermesInternalBytecode)
 endif()
 
 # SDL3 linkage - prefer static target for single-binary distribution
@@ -1376,6 +1431,11 @@ endif()
 if(NOT MYSTRAL_PLATFORM STREQUAL "ios" AND NOT MYSTRAL_PLATFORM STREQUAL "android")
     add_executable(mystral src/cli/main.cpp)
     target_link_libraries(mystral PRIVATE mystral-runtime)
+    if(MYSTRAL_USE_HERMES AND TARGET compileJS)
+        # The CLI uses Hermes' in-process compileJS API for --hermes-bytecode.
+        target_include_directories(mystral PRIVATE ${HERMES_ACTUAL_DIR}/API)
+        target_link_libraries(mystral PRIVATE compileJS)
+    endif()
 
     # Add webp include directories and definitions for video recording
     if(TARGET webp::mux)

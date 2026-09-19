@@ -96,7 +96,8 @@ describe("CLI Basic", () => {
     const exitCode = await proc.exited;
 
     expect(exitCode).toBe(1);
-    expect(stderr).toContain("Cannot open file");
+    expect(stderr).toContain("Failed to resolve entry");
+    expect(stderr).toContain("nonexistent-file.js");
   });
 
   it("should accept valid CLI options", async () => {

@@ -56,6 +56,9 @@ public:
      */
     virtual bool loadScript(const std::string& path) = 0;
 
+    /// Load and execute a Hermes HBC bytecode file.
+    virtual bool loadHermesBytecode(const std::string& path) = 0;
+
     /**
      * Evaluate JavaScript code directly
      * @param code JavaScript code to evaluate

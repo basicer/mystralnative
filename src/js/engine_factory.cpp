@@ -23,13 +23,17 @@ std::unique_ptr<Engine> createJSCEngine();
 std::unique_ptr<Engine> createV8Engine();
 #endif
 
-std::unique_ptr<Engine> createEngine() {
-    // Platform-specific defaults:
-    // - macOS/iOS: Prefer JSC (0 bytes, system framework)
-    // - Windows/Linux with V8: Use V8 (fastest)
-    // - Fallback: QuickJS (always available, small)
+#if defined(MYSTRAL_JS_HERMES)
+std::unique_ptr<Engine> createHermesEngine();
+#endif
 
-#if defined(__APPLE__) && defined(MYSTRAL_JS_JSC)
+std::unique_ptr<Engine> createEngine() {
+    // Prefer Hermes when enabled so .hbc entries use the bytecode runtime.
+
+#if defined(MYSTRAL_JS_HERMES)
+    std::cout << "[JS] Creating Hermes engine (configured backend)" << std::endl;
+    return createHermesEngine();
+#elif defined(__APPLE__) && defined(MYSTRAL_JS_JSC)
     std::cout << "[JS] Creating JavaScriptCore engine (platform default)" << std::endl;
     return createJSCEngine();
 #elif defined(MYSTRAL_JS_V8)
@@ -70,6 +74,15 @@ std::unique_ptr<Engine> createEngine(EngineType type) {
             return createJSCEngine();
 #else
             std::cerr << "[JS] JavaScriptCore not available (Apple platforms only)" << std::endl;
+            return nullptr;
+#endif
+
+        case EngineType::Hermes:
+#if defined(MYSTRAL_JS_HERMES)
+            std::cout << "[JS] Creating Hermes engine" << std::endl;
+            return createHermesEngine();
+#else
+            std::cerr << "[JS] Hermes not compiled in" << std::endl;
             return nullptr;
 #endif
 

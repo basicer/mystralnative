@@ -125,10 +125,11 @@ bool ModuleSystem::loadEntry(const std::string& entryPath) {
     }
 
     if (resolved.format == ModuleFormat::ESM) {
-        // JSC and QuickJS don't have native ESM support in eval(), so transpile to CJS.
+        // JSC, QuickJS, and Hermes don't have native ESM support in eval(), so transpile to CJS.
         // V8 has native ESM support via its module API (handled by loadEsmEntry).
         if (engine_->getType() == EngineType::JavaScriptCore ||
-            engine_->getType() == EngineType::QuickJS) {
+            engine_->getType() == EngineType::QuickJS ||
+            engine_->getType() == EngineType::Hermes) {
             std::string cjs = transpileEsmToCjs(source);
             ResolvedModule cjsModule = resolved;
             cjsModule.format = ModuleFormat::CJS;
@@ -164,9 +165,10 @@ JSValueHandle ModuleSystem::require(const std::string& specifier, const std::str
     }
 
     if (resolved.format == ModuleFormat::ESM) {
-        // JSC and QuickJS don't have native ESM support in eval(), so transpile to CJS.
+        // JSC, QuickJS, and Hermes don't have native ESM support in eval(), so transpile to CJS.
         if (engine_->getType() == EngineType::JavaScriptCore ||
-            engine_->getType() == EngineType::QuickJS) {
+            engine_->getType() == EngineType::QuickJS ||
+            engine_->getType() == EngineType::Hermes) {
             std::string source;
             if (!resolver_.readFile(resolved.resolved, source, error)) {
                 std::cerr << "[Modules] Failed to read module: " << error << std::endl;

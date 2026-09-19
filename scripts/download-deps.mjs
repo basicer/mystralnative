@@ -12,7 +12,7 @@
  *   node scripts/download-deps.mjs --only skia-ios  # Download only iOS Skia
  *   node scripts/download-deps.mjs --force      # Re-download even if exists
  *
- * Desktop deps: wgpu, sdl3, dawn, v8, quickjs, stb, cgltf, webp, skia, swc
+ * Desktop deps: wgpu, sdl3, dawn, v8, quickjs, hermes, stb, cgltf, webp, skia, swc
  * iOS deps: wgpu-ios, skia-ios (for cross-compilation from macOS)
  * Android deps: wgpu-android, sdl3-android
  */
@@ -172,6 +172,13 @@ const DEPS = {
       return `https://github.com/quickjs-ng/quickjs/archive/refs/tags/v${DEPS.quickjs.version}.zip`;
     },
     extractTo: 'quickjs',
+  },
+  hermes: {
+    // Hermes source is built in-tree like QuickJS. Keep this pinned because the
+    // embedding API is not stable across arbitrary React Native revisions.
+    version: 'static_h-7508017ae267ecffe4c4df38656713034f35d9bf',
+    getUrl: () => 'https://github.com/facebook/hermes/archive/7508017ae267ecffe4c4df38656713034f35d9bf.tar.gz',
+    extractTo: 'hermes',
   },
   quiche: {
     // Cloudflare quiche - QUIC + HTTP/3 (native backend for the WebTransport API).
@@ -772,7 +779,7 @@ async function main() {
   const onlyIndex = args.indexOf('--only');
 
   // Desktop deps (downloaded by default)
-  const desktopDeps = ['wgpu', 'sdl3', 'dawn', 'v8', 'quickjs', 'stb', 'cgltf', 'webp', 'skia', 'swc', 'libuv', 'draco', 'quiche'];
+  const desktopDeps = ['wgpu', 'sdl3', 'dawn', 'v8', 'quickjs', 'hermes', 'stb', 'cgltf', 'webp', 'skia', 'swc', 'libuv', 'draco', 'quiche'];
 
   // iOS deps (only downloaded with --only or --ios)
   const iosDeps = ['wgpu-ios', 'skia-ios', 'quiche-ios'];

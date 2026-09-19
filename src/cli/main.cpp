@@ -32,6 +32,11 @@
 #include <regex>
 #include <queue>
 #include <array>
+#include <stdexcept>
+
+#ifdef MYSTRAL_JS_HERMES
+#include <hermes/CompileJS.h>
+#endif
 
 // WebP animation encoding (for video recording)
 #ifdef MYSTRAL_HAS_WEBP_MUX
@@ -336,6 +341,7 @@ COMPILE OPTIONS:
     --out, -o <file>      Alias for --output
     --root <dir>          Root directory for bundle paths (default: cwd)
     --bundle-only         Create standalone .bundle file (no exe, for .app packaging)
+    --hermes-bytecode     Compile the entry to Hermes HBC bytecode (.hbc)
 
 BAKE OPTIONS (Lightmap Generation):
     --output <dir>        Output directory for lightmaps (default: ./lightmaps)
@@ -381,6 +387,8 @@ EXAMPLES:
     MYSTRAL_HEADLESS=1 mystral run render.js --screenshot render.png --frames 10
     mystral compile game.js --include assets --out my-game    # Bundle into a single binary
     mystral compile game.js --include assets --out game.bundle --bundle-only  # Standalone bundle file
+    mystral compile game.js --hermes-bytecode --out game.hbc  # Compile Hermes bytecode in-process
+    mystral run game.hbc                                      # Run Hermes bytecode (Hermes build)
     mystral bake scene.glb --output ./lightmaps               # Bake lightmaps for scene
     mystral bake game.js --resolution 1024 --samples 128      # Bake with custom settings
 
@@ -433,6 +441,7 @@ struct CLIOptions {
     std::string outputPath;
     std::string rootDir;
     bool bundleOnly = false;  // Create standalone .bundle file (no exe copy)
+    bool hermesBytecode = false;  // Compile to Hermes HBC bytecode
 
     // Debug server
     int debugPort = 0;  // Port for debug server (0 = disabled)
@@ -484,6 +493,8 @@ CLIOptions parseArgs(int argc, char* argv[]) {
             opts.watch = true;
         } else if (arg == "--bundle-only") {
             opts.bundleOnly = true;
+        } else if (arg == "--hermes-bytecode") {
+            opts.hermesBytecode = true;
         } else if ((arg == "--video" || arg == "--record") && i + 1 < argc) {
             opts.videoPath = argv[++i];
             // Auto-detect --mp4 from extension
@@ -1064,6 +1075,97 @@ bool convertWebPToMP4(const std::string& webpPath, const std::string& mp4Path, i
     return success;
 }
 
+#ifdef MYSTRAL_JS_HERMES
+class HermesCompilerDiagnostics final : public hermes::DiagnosticHandler {
+public:
+    void handle(const Diagnostic& diagnostic) override {
+        const char* kind = diagnostic.kind == Error     ? "error"
+                           : diagnostic.kind == Warning ? "warning"
+                                                        : "note";
+        std::cerr << "[Hermes] " << kind << ": " << diagnostic.line << ':'
+                  << diagnostic.column << ": " << diagnostic.message << std::endl;
+    }
+};
+#endif
+
+static int compileHermesBytecode(const CLIOptions& opts) {
+#ifndef MYSTRAL_JS_HERMES
+    (void)opts;
+    std::cerr << "Error: Hermes bytecode support requires a build configured with "
+              << "MYSTRAL_USE_HERMES=ON." << std::endl;
+    return 1;
+#else
+    namespace fs = std::filesystem;
+
+    if (opts.scriptPath.empty()) {
+        std::cerr << "Error: No entry file specified for Hermes bytecode compile." << std::endl;
+        return 1;
+    }
+
+    fs::path entryPath = opts.scriptPath;
+    if (!fs::exists(entryPath) || !fs::is_regular_file(entryPath)) {
+        std::cerr << "Error: Entry file not found: " << entryPath << std::endl;
+        return 1;
+    }
+
+    std::string source;
+    try {
+        source = readFile(entryPath.string());
+    } catch (const std::exception& error) {
+        std::cerr << "Error: " << error.what() << std::endl;
+        return 1;
+    }
+
+    hermes::CompileJSOptions compileOptions;
+    compileOptions.optimize = true;
+    compileOptions.emitAsyncBreakCheck = true;
+    compileOptions.debug = opts.debug;
+    compileOptions.enableES6BlockScoping = true;
+    compileOptions.enableAsyncGenerators = true;
+
+    std::string bytecode;
+    HermesCompilerDiagnostics diagnostics;
+    const std::string sourceURL = fs::absolute(entryPath).string();
+    if (!hermes::compileJS(source, sourceURL, bytecode, compileOptions, &diagnostics)) {
+        return 1;
+    }
+
+    fs::path outputPath = opts.outputPath.empty()
+                              ? entryPath.replace_extension(".hbc")
+                              : fs::path(opts.outputPath);
+    if (outputPath.extension().empty()) {
+        outputPath += ".hbc";
+    }
+    if (outputPath.is_relative()) {
+        outputPath = fs::absolute(outputPath);
+    }
+
+    std::error_code error;
+    if (!outputPath.parent_path().empty()) {
+        fs::create_directories(outputPath.parent_path(), error);
+    }
+    if (error) {
+        std::cerr << "Error: Failed to create output directory: " << error.message() << std::endl;
+        return 1;
+    }
+
+    std::ofstream output(outputPath, std::ios::binary | std::ios::trunc);
+    if (!output) {
+        std::cerr << "Error: Cannot write Hermes bytecode: " << outputPath << std::endl;
+        return 1;
+    }
+    output.write(bytecode.data(), static_cast<std::streamsize>(bytecode.size()));
+    if (!output) {
+        std::cerr << "Error: Failed while writing Hermes bytecode: " << outputPath << std::endl;
+        return 1;
+    }
+
+    std::cout << "Compiled Hermes bytecode: " << outputPath
+              << " (" << bytecode.size() << " bytes)" << std::endl;
+    return 0;
+#endif
+}
+
 static int compileBundle(const CLIOptions& opts) {
     namespace fs = std::filesystem;
 
@@ -1346,8 +1448,11 @@ int runScript(const CLIOptions& opts) {
         return 1;
     }
 
-    // Load and execute the script
-    if (!runtime->loadScript(opts.scriptPath)) {
+    const bool isHermesBytecode = std::filesystem::path(opts.scriptPath).extension() == ".hbc";
+    const bool loaded = isHermesBytecode
+                            ? runtime->loadHermesBytecode(opts.scriptPath)
+                            : runtime->loadScript(opts.scriptPath);
+    if (!loaded) {
         std::cerr << "Error: Failed to evaluate script!" << std::endl;
         return 1;
     }
@@ -2132,7 +2237,7 @@ int main(int argc, char* argv[]) {
 
     // Handle 'compile' command
     if (opts.command == "compile") {
-        return compileBundle(opts);
+        return opts.hermesBytecode ? compileHermesBytecode(opts) : compileBundle(opts);
     }
 
     // Handle 'bake' command

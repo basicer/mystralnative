@@ -38,6 +38,7 @@ enum class EngineType {
     QuickJS,
     V8,
     JavaScriptCore,
+    Hermes,
     Unknown
 };
 
@@ -88,6 +89,10 @@ public:
      * Evaluate a classic script and return the result.
      */
     virtual JSValueHandle evalScriptWithResult(const char* code, const char* filename = "<eval>") = 0;
+
+    /// Evaluate engine-specific precompiled bytecode. Engines that do not
+    /// support a bytecode format return false.
+    virtual bool evalBytecode(const uint8_t*, size_t, const char*) { return false; }
 
     // ========================================================================
     // Global Object Access
@@ -267,6 +272,9 @@ public:
      * Call resumeFrameTracking() to re-enable tracking.
      */
     virtual void suspendFrameTracking() {}
+
+    /// Run pending Promise jobs, when the engine requires explicit draining.
+    virtual void drainMicrotasks() {}
 
     /**
      * Resume frame allocation tracking after a suspend.

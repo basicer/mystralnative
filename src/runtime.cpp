@@ -43,6 +43,7 @@
 #include <memory>
 #include <vector>
 #include <functional>
+#include <iterator>
 #include <unordered_set>
 #include <queue>
 #include <mutex>
@@ -577,6 +578,7 @@ public:
 
         // Store script path for reloading
         scriptPath_ = path;
+        bytecodeScript_ = false;
 
         // Set up file watching if watch mode is enabled
         if (config_.watch && fs::getFileWatcher().isReady()) {
@@ -597,6 +599,26 @@ public:
         return moduleSystem_->loadEntry(path);
     }
 
+    bool loadHermesBytecode(const std::string& path) override {
+        if (!jsEngine_ || jsEngine_->getType() != js::EngineType::Hermes) {
+            std::cerr << "[Mystral] Hermes bytecode requires a Hermes build" << std::endl;
+            return false;
+        }
+        std::ifstream input(path, std::ios::binary);
+        if (!input) {
+            std::cerr << "[Mystral] Failed to open bytecode: " << path << std::endl;
+            return false;
+        }
+        std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(input)), {});
+        if (bytes.empty() || !jsEngine_->evalBytecode(bytes.data(), bytes.size(), path.c_str())) {
+            std::cerr << "[Mystral] Failed to evaluate Hermes bytecode: " << jsEngine_->getException() << std::endl;
+            return false;
+        }
+        scriptPath_ = path;
+        bytecodeScript_ = true;
+        return true;
+    }
+
     bool evalScript(const std::string& code, const std::string& filename) override {
         std::cout << "[Mystral] Evaluating script: " << filename
                   << " (" << code.length() << " bytes)" << std::endl;
@@ -612,6 +634,11 @@ public:
     bool reloadScript() override {
         if (scriptPath_.empty()) {
             std::cerr << "[HotReload] No script loaded to reload" << std::endl;
+            return false;
+        }
+
+        if (bytecodeScript_) {
+            std::cerr << "[HotReload] Hermes bytecode cannot be reloaded through the module system" << std::endl;
             return false;
         }
 
@@ -3371,8 +3398,12 @@ globalThis.__mystralNativeDecodeDracoAsync = function(buffer, attrs) {
             // but that requires access to the raw context
         }
 
-        // V8 and JSC handle microtasks automatically in their runloops
-        // So we don't need to do anything special for them
+        // Resume Promise continuations in Hermes' explicit microtask queue.
+        if (jsEngine_ && jsEngine_->getType() == js::EngineType::Hermes) {
+            jsEngine_->drainMicrotasks();
+        }
+
+        // V8 and JSC handle microtasks automatically in their runloops.
     }
 
     RuntimeConfig config_;
@@ -3476,6 +3507,7 @@ globalThis.__mystralNativeDecodeDracoAsync = function(buffer, attrs) {
 
     // Hot reload state
     std::string scriptPath_;  // Path to the currently loaded script
+    bool bytecodeScript_ = false;
     int watchId_ = -1;        // File watcher ID (-1 if not watching)
     bool reloadRequested_ = false;  // Set when a file change is detected
 
