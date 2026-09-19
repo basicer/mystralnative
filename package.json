@@ -28,6 +28,9 @@
     "package:macos": "node scripts/package-macos.mjs",
     "package:windows": "node scripts/package-windows.mjs",
     "package:linux": "node scripts/package-linux.mjs",
+    "format": "bun scripts/format.ts",
+    "format:check": "bun scripts/format.ts --check",
+    "format:diff": "bun scripts/format.ts --all --diff",
     "test": "bun test tests/ci",
     "test:gpu": "bun test tests/gpu",
     "test:all": "bun test tests"

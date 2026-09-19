@@ -1,0 +1,35 @@
+# clang-format 18
+BasedOnStyle: LLVM
+IndentWidth: 4
+ContinuationIndentWidth: 4
+AccessModifierOffset: -4
+UseTab: Never
+BreakBeforeBraces: Attach
+NamespaceIndentation: None
+IndentCaseLabels: true
+IndentPPDirectives: None
+PointerAlignment: Left
+ReferenceAlignment: Left
+AlignAfterOpenBracket: Align
+AlignOperands: Align
+BreakBeforeBinaryOperators: None
+BreakBeforeTernaryOperators: true
+BreakConstructorInitializers: BeforeComma
+PackConstructorInitializers: CurrentLine
+
+# Avoid forced wrapping, include sorting, and comment reflow.
+ColumnLimit: 0
+SortIncludes: Never
+ReflowComments: false
+FixNamespaceComments: false
+AlignTrailingComments:
+  Kind: Leave
+SpacesBeforeTrailingComments: 2
+
+AllowShortFunctionsOnASingleLine: All
+AllowShortLambdasOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: true
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortBlocksOnASingleLine: Always
+BreakAdjacentStringLiterals: false

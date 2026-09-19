@@ -1,0 +1,9 @@
+# Dependencies, build output, and generated shader headers.
+third_party/**
+build*/**
+node_modules/**
+src/raytracing/shaders/**
+
+# Deprecated native model loaders.
+**/gltf/**
+**/cgltf*

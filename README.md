@@ -404,6 +404,29 @@ Full documentation is available at [mystralengine.github.io/mystralnative](https
 
 Issues and PRs welcome! See the [GitHub repository](https://github.com/mystralengine/mystralnative).
 
+### C++ formatting
+
+Use **clang-format 18** with the root `.clang-format`. Set `CLANG_FORMAT` to the
+executable path if it is not named `clang-format` on your PATH (for example,
+`CLANG_FORMAT=clang-format-18`). On macOS, `brew install llvm@18` provides it at
+`$(brew --prefix llvm@18)/bin/clang-format`; on Ubuntu, install `clang-format-18`.
+
+```bash
+bun run format                     # Format changed C/C++/Objective-C lines against HEAD
+bun run format:check               # Check the same lines without changing files
+bun run format:diff                # Preview the full formatting patch without changing files
+bun run format --base origin/main  # Format changes since a branch's base revision
+bun run format:check --base origin/main
+bun run format --all               # Explicitly format all tracked native sources
+```
+
+The default only formats changed lines to keep patches small. Stage new source
+files first so Git can discover them. Dependencies, generated shader headers,
+and deprecated native model loaders are excluded by `.clang-format-ignore`.
+The configuration uses four spaces and attached braces, and avoids forced
+line wrapping, include sorting, and comment reflow. Editor integrations can use
+the same configuration automatically.
+
 ## License
 
 MIT License — see [LICENSE](LICENSE) for details.
