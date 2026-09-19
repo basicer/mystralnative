@@ -131,22 +131,46 @@ public:
     ~AudioBufferSourceNode();
 
     void setBuffer(std::shared_ptr<AudioBuffer> buffer);
-    std::shared_ptr<AudioBuffer> buffer() const { return buffer_; }
+    std::shared_ptr<AudioBuffer> buffer() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return buffer_;
+    }
 
-    bool loop() const { return loop_; }
-    void setLoop(bool loop) { loop_ = loop; }
+    bool loop() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return loop_;
+    }
+    void setLoop(bool loop) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        loop_ = loop;
+    }
 
-    double loopStart() const { return loopStart_; }
-    void setLoopStart(double time) { loopStart_ = time; }
+    double loopStart() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return loopStart_;
+    }
+    void setLoopStart(double time) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        loopStart_ = time;
+    }
 
-    double loopEnd() const { return loopEnd_; }
-    void setLoopEnd(double time) { loopEnd_ = time; }
+    double loopEnd() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return loopEnd_;
+    }
+    void setLoopEnd(double time) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        loopEnd_ = time;
+    }
 
     // Playback control
     void start(double when = 0, double offset = 0, double duration = -1);
     void stop(double when = 0);
 
-    bool isPlaying() const { return isPlaying_; }
+    bool isPlaying() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return isPlaying_;
+    }
 
     // Event callback
     std::function<void()> onended;
@@ -154,6 +178,7 @@ public:
     void process(float* output, size_t numFrames, int numChannels) override;
 
 private:
+    mutable std::mutex mutex_;
     std::shared_ptr<AudioBuffer> buffer_;
     bool loop_ = false;
     double loopStart_ = 0;
@@ -207,7 +232,7 @@ private:
     State state_ = State::Suspended;
     float sampleRate_ = 44100.0f;
     uint64_t startTime_ = 0;
-    uint64_t sampleCount_ = 0;
+    std::atomic<uint64_t> sampleCount_{0};
 
     std::unique_ptr<AudioDestinationNode> destination_;
     std::vector<AudioBufferSourceNode*> activeSources_;

@@ -8,8 +8,8 @@
 console.log("Web Audio API Test starting...");
 
 async function main() {
-    // Create AudioContext (call as function, not constructor)
-    const audioCtx = AudioContext();
+    // Create AudioContext
+    const audioCtx = new AudioContext();
     console.log("AudioContext created, sample rate:", audioCtx.sampleRate);
     console.log("AudioContext state:", audioCtx.state);
 
@@ -42,7 +42,6 @@ async function main() {
     // Create source node and play
     const source = audioCtx.createBufferSource();
     source.buffer = buffer;
-    source._setBuffer(buffer);  // Call native binding to actually set the buffer
     source.connect(audioCtx.destination);
 
     console.log("Playing 440 Hz tone for 1 second...");

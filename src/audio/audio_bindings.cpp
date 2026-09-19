@@ -30,7 +30,7 @@ js::JSValueHandle createAudioBufferJS(js::Engine* engine, std::shared_ptr<AudioB
     auto jsBuffer = engine->newObject();
 
     // Store native pointer
-    void* key = jsBuffer.ptr;
+    void* key = buffer.get();
     g_audioBuffers[key] = buffer;
 
     // Store raw pointer as private data for lookup
@@ -77,10 +77,15 @@ js::JSValueHandle createSourceNodeJS(js::Engine* engine, AudioBufferSourceNode* 
         engine->newFunction("_setBuffer", [nodePtr](void* ctx, const std::vector<js::JSValueHandle>& args) -> js::JSValueHandle {
             if (args.empty()) return g_jsEngine->newUndefined();
 
+            if (g_jsEngine->isNull(args[0])) {
+                nodePtr->setBuffer(nullptr);
+                return g_jsEngine->newUndefined();
+            }
+
             // Get the native AudioBuffer pointer from the JS object's private data
             void* privateData = g_jsEngine->getPrivateData(args[0]);
             if (!privateData) {
-                std::cerr << "[Audio] Warning: buffer has no private data" << std::endl;
+                g_jsEngine->throwException("buffer must be an AudioBuffer or null");
                 return g_jsEngine->newUndefined();
             }
 
@@ -94,7 +99,7 @@ js::JSValueHandle createSourceNodeJS(js::Engine* engine, AudioBufferSourceNode* 
                 }
             }
 
-            std::cerr << "[Audio] Warning: buffer not found in registry" << std::endl;
+            g_jsEngine->throwException("buffer must be an AudioBuffer or null");
             return g_jsEngine->newUndefined();
         })
     );
@@ -112,6 +117,19 @@ js::JSValueHandle createSourceNodeJS(js::Engine* engine, AudioBufferSourceNode* 
     // loopStart, loopEnd
     engine->setProperty(jsNode, "loopStart", engine->newNumber(0));
     engine->setProperty(jsNode, "loopEnd", engine->newNumber(0));
+
+    engine->setProperty(jsNode, "_setLoopStart",
+                        engine->newFunction("_setLoopStart", [nodePtr](void*, const std::vector<js::JSValueHandle>& args) {
+                            if (!args.empty()) nodePtr->setLoopStart(g_jsEngine->toNumber(args[0]));
+                            return g_jsEngine->newUndefined();
+                        }));
+    engine->setProperty(jsNode, "_setLoopEnd",
+                        engine->newFunction("_setLoopEnd", [nodePtr](void*, const std::vector<js::JSValueHandle>& args) {
+                            if (!args.empty()) nodePtr->setLoopEnd(g_jsEngine->toNumber(args[0]));
+                            return g_jsEngine->newUndefined();
+                        }));
+    engine->call(engine->getGlobalProperty("__mystralBindAudioSource"),
+                 engine->newUndefined(), {jsNode});
 
     // connect(destination)
     engine->setProperty(jsNode, "connect",
@@ -244,7 +262,7 @@ js::JSValueHandle createAudioContextJS(js::Engine* engine, AudioContext* ctxPtr)
 
             // Pass undefined for context (not needed for our implementation)
             auto jsNode = createSourceNodeJS(g_jsEngine, nodePtr, g_jsEngine->newUndefined());
-            g_sourceNodes[jsNode.ptr] = std::move(node);
+            g_sourceNodes[nodePtr] = std::move(node);
 
             return jsNode;
         })
@@ -258,7 +276,7 @@ js::JSValueHandle createAudioContextJS(js::Engine* engine, AudioContext* ctxPtr)
 
             // Pass undefined for context (not needed for our implementation)
             auto jsNode = createGainNodeJS(g_jsEngine, nodePtr, g_jsEngine->newUndefined());
-            g_gainNodes[jsNode.ptr] = std::move(node);
+            g_gainNodes[nodePtr] = std::move(node);
 
             return jsNode;
         })
@@ -325,6 +343,33 @@ js::JSValueHandle createAudioContextJS(js::Engine* engine, AudioContext* ctxPtr)
 void initializeAudioBindings(js::Engine* engine) {
     g_jsEngine = engine;
 
+    // Keep JS values in JS closures, avoiding captured frame-scoped engine handles.
+    engine->eval(R"JS(
+        globalThis.__mystralBindAudioSource = function(source) {
+            for (const [name, setter, convert] of [
+                ['buffer', source._setBuffer, value => value],
+                ['loop', source._setLoop, Boolean],
+                ['loopStart', source._setLoopStart, Number],
+                ['loopEnd', source._setLoopEnd, Number],
+            ]) {
+                let value = source[name];
+                Object.defineProperty(source, name, {
+                    enumerable: true, configurable: true,
+                    get() { return value; },
+                    set(next) {
+                        next = convert(next);
+                        if ((name === 'loopStart' || name === 'loopEnd') && !Number.isFinite(next)) {
+                            throw new TypeError(name + ' must be finite');
+                        }
+                        setter(next);
+                        value = next;
+                    },
+                });
+            }
+        };
+    )JS",
+                 "audio-source-properties.js");
+
     // Create AudioContext constructor
     auto audioContextCtor = engine->newConstructor("AudioContext",
                                                    [](void* ctx, const std::vector<js::JSValueHandle>& args) -> js::JSValueHandle {
@@ -332,7 +377,7 @@ void initializeAudioBindings(js::Engine* engine) {
                                                        auto* ctxPtr = context.get();
 
                                                        auto jsCtx = createAudioContextJS(g_jsEngine, ctxPtr);
-                                                       g_audioContexts[jsCtx.ptr] = std::move(context);
+                                                       g_audioContexts[ctxPtr] = std::move(context);
 
                                                        return jsCtx;
                                                    });

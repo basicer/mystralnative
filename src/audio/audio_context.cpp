@@ -105,16 +105,16 @@ AudioBufferSourceNode::AudioBufferSourceNode(AudioContext* context)
     : AudioNode(context) {}
 
 AudioBufferSourceNode::~AudioBufferSourceNode() {
-    if (isPlaying_) {
-        context_->unregisterSource(this);
-    }
+    context_->unregisterSource(this);
 }
 
 void AudioBufferSourceNode::setBuffer(std::shared_ptr<AudioBuffer> buffer) {
+    std::lock_guard<std::mutex> lock(mutex_);
     buffer_ = buffer;
 }
 
 void AudioBufferSourceNode::start(double when, double offset, double duration) {
+    std::unique_lock<std::mutex> lock(mutex_);
     if (isPlaying_ || !buffer_) return;
 
     startTime_ = context_->currentTime() + when;
@@ -123,15 +123,18 @@ void AudioBufferSourceNode::start(double when, double offset, double duration) {
     playbackPosition_ = static_cast<size_t>(offset * buffer_->sampleRate());
     isPlaying_ = true;
 
+    lock.unlock();
     context_->registerSource(this);
 }
 
 void AudioBufferSourceNode::stop(double when) {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (!isPlaying_) return;
     stopTime_ = context_->currentTime() + when;
 }
 
 void AudioBufferSourceNode::process(float* output, size_t numFrames, int numChannels) {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (!isPlaying_ || !buffer_) return;
 
     double currentTime = context_->currentTime();
@@ -139,7 +142,6 @@ void AudioBufferSourceNode::process(float* output, size_t numFrames, int numChan
     // Check if we should stop
     if (stopTime_ >= 0 && currentTime >= stopTime_) {
         isPlaying_ = false;
-        context_->unregisterSource(this);
         if (onended) onended();
         return;
     }
@@ -152,18 +154,22 @@ void AudioBufferSourceNode::process(float* output, size_t numFrames, int numChan
     int bufferChannels = buffer_->numberOfChannels();
     size_t bufferLength = buffer_->length();
 
+    if (bufferLength == 0) {
+        isPlaying_ = false;
+        return;
+    }
+    const size_t loopStartSample = static_cast<size_t>(std::clamp(loopStart_, 0.0, buffer_->duration()) * buffer_->sampleRate());
+    size_t loopEndSample = loopEnd_ > 0
+                               ? static_cast<size_t>(std::min(loopEnd_, buffer_->duration()) * buffer_->sampleRate())
+                               : bufferLength;
+    const bool validLoop = loopStartSample < loopEndSample;
     for (size_t frame = 0; frame < numFrames; frame++) {
-        if (playbackPosition_ >= bufferLength) {
+        if (playbackPosition_ >= (loop_ && validLoop ? loopEndSample : bufferLength)) {
             if (loop_) {
-                size_t loopStartSample = static_cast<size_t>(loopStart_ * buffer_->sampleRate());
-                size_t loopEndSample = loopEnd_ > 0
-                    ? static_cast<size_t>(loopEnd_ * buffer_->sampleRate())
-                    : bufferLength;
-                playbackPosition_ = loopStartSample;
+                playbackPosition_ = validLoop ? loopStartSample : 0;
             } else {
                 // End of buffer
                 isPlaying_ = false;
-                context_->unregisterSource(this);
                 if (onended) onended();
                 return;
             }
@@ -174,7 +180,6 @@ void AudioBufferSourceNode::process(float* output, size_t numFrames, int numChan
             double playedTime = static_cast<double>(playbackPosition_) / buffer_->sampleRate() - offsetTime_;
             if (playedTime >= durationTime_) {
                 isPlaying_ = false;
-                context_->unregisterSource(this);
                 if (onended) onended();
                 return;
             }
@@ -234,7 +239,7 @@ AudioContext::~AudioContext() {
 }
 
 double AudioContext::currentTime() const {
-    return static_cast<double>(sampleCount_) / sampleRate_;
+    return static_cast<double>(sampleCount_.load()) / sampleRate_;
 }
 
 std::shared_ptr<AudioBuffer> AudioContext::createBuffer(int numberOfChannels, size_t length, float sampleRate) {
@@ -309,6 +314,9 @@ void AudioContext::audioCallback(float* output, int numFrames) {
         for (auto* source : activeSources_) {
             source->process(output, numFrames, 2);
         }
+        activeSources_.erase(std::remove_if(activeSources_.begin(), activeSources_.end(),
+                                            [](AudioBufferSourceNode* source) { return !source->isPlaying(); }),
+                             activeSources_.end());
     }
 
     // Clamp output to [-1, 1]
