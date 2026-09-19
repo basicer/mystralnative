@@ -477,6 +477,14 @@ static WGPUCompareFunction stringToCompareFunction(const std::string& func) {
     return WGPUCompareFunction_Undefined;  // Default (no comparison)
 }
 
+// Native WebGPU distinguishes an omitted stride from an explicit zero.
+// Omitted strides are valid for a single row/image; let the backend validate them.
+static uint32_t getCopyStride(js::JSValueHandle layout, const char* name) {
+    auto value = g_engine->getProperty(layout, name);
+    return g_engine->isUndefined(value) ? WGPU_COPY_STRIDE_UNDEFINED
+                                        : (uint32_t)g_engine->toNumber(value);
+}
+
 /**
  * Get the current swapchain texture (or offscreen texture in no-SDL mode)
  */
@@ -1366,7 +1374,7 @@ bool initBindings(js::Engine* engine, void* wgpuInstance, void* wgpuDevice, void
                                 return g_engine->newUndefined();
                             }
 
-                            // Parse size FIRST (need height for rowsPerImage default)
+                            // Parse copy size
                             auto sizeVal = args[3];
                             uint32_t width = 1, height = 1, depthOrArrayLayers = 1;
                             auto lengthProp = g_engine->getProperty(sizeVal, "length");
@@ -1384,17 +1392,14 @@ bool initBindings(js::Engine* engine, void* wgpuInstance, void* wgpuDevice, void
                                 if (!g_engine->isUndefined(d)) depthOrArrayLayers = (uint32_t)g_engine->toNumber(d);
                             }
 
-                            // Parse dataLayout {offset?, bytesPerRow, rowsPerImage?}
+                            // Parse dataLayout {offset?, bytesPerRow?, rowsPerImage?}
                             auto dataLayout = args[2];
                             auto layoutOffsetVal = g_engine->getProperty(dataLayout, "offset");
                             uint64_t layoutOffset = g_engine->isUndefined(layoutOffsetVal) ? 0 : (uint64_t)g_engine->toNumber(layoutOffsetVal);
 
-                            uint32_t bytesPerRow = (uint32_t)g_engine->toNumber(g_engine->getProperty(dataLayout, "bytesPerRow"));
+                            uint32_t bytesPerRow = getCopyStride(dataLayout, "bytesPerRow");
 
-                            auto rowsPerImageVal = g_engine->getProperty(dataLayout, "rowsPerImage");
-                            // rowsPerImage must be >= height for 2D textures (wgpu validation requirement)
-                            uint32_t rowsPerImage = g_engine->isUndefined(rowsPerImageVal) ? height : (uint32_t)g_engine->toNumber(rowsPerImageVal);
-                            if (rowsPerImage == 0) rowsPerImage = height;
+                            uint32_t rowsPerImage = getCopyStride(dataLayout, "rowsPerImage");
 
                             // Create copy structures
                             WGPUImageCopyTexture_Compat destCopy = {};
@@ -3066,9 +3071,10 @@ bool initBindings(js::Engine* engine, void* wgpuInstance, void* wgpuDevice, void
 
                                     // Source (buffer info)
                                     WGPUBuffer buffer = (WGPUBuffer)g_engine->getPrivateData(g_engine->getProperty(sourceProp, "buffer"));
-                                    uint64_t offset = (uint64_t)g_engine->toNumber(g_engine->getProperty(sourceProp, "offset"));
-                                    uint32_t bytesPerRow = (uint32_t)g_engine->toNumber(g_engine->getProperty(sourceProp, "bytesPerRow"));
-                                    uint32_t rowsPerImage = (uint32_t)g_engine->toNumber(g_engine->getProperty(sourceProp, "rowsPerImage"));
+                                    auto offsetProp = g_engine->getProperty(sourceProp, "offset");
+                                    uint64_t offset = g_engine->isUndefined(offsetProp) ? 0 : (uint64_t)g_engine->toNumber(offsetProp);
+                                    uint32_t bytesPerRow = getCopyStride(sourceProp, "bytesPerRow");
+                                    uint32_t rowsPerImage = getCopyStride(sourceProp, "rowsPerImage");
 
                                     // Destination (texture info)
                                     WGPUTexture texture = (WGPUTexture)g_engine->getPrivateData(g_engine->getProperty(destProp, "texture"));
@@ -3092,7 +3098,7 @@ bool initBindings(js::Engine* engine, void* wgpuInstance, void* wgpuDevice, void
                                         srcCopy.buffer = buffer;
                                         srcCopy.layout.offset = offset;
                                         srcCopy.layout.bytesPerRow = bytesPerRow;
-                                        srcCopy.layout.rowsPerImage = rowsPerImage > 0 ? rowsPerImage : height;
+                                        srcCopy.layout.rowsPerImage = rowsPerImage;
 
                                         WGPUImageCopyTexture_Compat dstCopy = {};
                                         dstCopy.texture = texture;
@@ -3128,9 +3134,10 @@ bool initBindings(js::Engine* engine, void* wgpuInstance, void* wgpuDevice, void
 
                                     // Destination (buffer info)
                                     WGPUBuffer buffer = (WGPUBuffer)g_engine->getPrivateData(g_engine->getProperty(destProp, "buffer"));
-                                    uint64_t offset = (uint64_t)g_engine->toNumber(g_engine->getProperty(destProp, "offset"));
-                                    uint32_t bytesPerRow = (uint32_t)g_engine->toNumber(g_engine->getProperty(destProp, "bytesPerRow"));
-                                    uint32_t rowsPerImage = (uint32_t)g_engine->toNumber(g_engine->getProperty(destProp, "rowsPerImage"));
+                                    auto offsetProp = g_engine->getProperty(destProp, "offset");
+                                    uint64_t offset = g_engine->isUndefined(offsetProp) ? 0 : (uint64_t)g_engine->toNumber(offsetProp);
+                                    uint32_t bytesPerRow = getCopyStride(destProp, "bytesPerRow");
+                                    uint32_t rowsPerImage = getCopyStride(destProp, "rowsPerImage");
 
                                     // Copy size - can be array [w,h,d] or object {width, height, depthOrArrayLayers}
                                     uint32_t width = 0, height = 0, depthOrLayers = 1;
@@ -3166,7 +3173,7 @@ bool initBindings(js::Engine* engine, void* wgpuInstance, void* wgpuDevice, void
                                         dstCopy.buffer = buffer;
                                         dstCopy.layout.offset = offset;
                                         dstCopy.layout.bytesPerRow = bytesPerRow;
-                                        dstCopy.layout.rowsPerImage = rowsPerImage > 0 ? rowsPerImage : height;
+                                        dstCopy.layout.rowsPerImage = rowsPerImage;
 
                                         WGPUExtent3D copySize = {width, height, depthOrLayers};
                                         wgpuCommandEncoderCopyTextureToBuffer(g_jsCommandEncoder, &srcCopy, &dstCopy, &copySize);
