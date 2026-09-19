@@ -326,17 +326,16 @@ void initializeAudioBindings(js::Engine* engine) {
     g_jsEngine = engine;
 
     // Create AudioContext constructor
-    auto audioContextCtor = engine->newFunction("AudioContext",
-        [](void* ctx, const std::vector<js::JSValueHandle>& args) -> js::JSValueHandle {
-            auto context = std::make_unique<AudioContext>();
-            auto* ctxPtr = context.get();
+    auto audioContextCtor = engine->newConstructor("AudioContext",
+                                                   [](void* ctx, const std::vector<js::JSValueHandle>& args) -> js::JSValueHandle {
+                                                       auto context = std::make_unique<AudioContext>();
+                                                       auto* ctxPtr = context.get();
 
-            auto jsCtx = createAudioContextJS(g_jsEngine, ctxPtr);
-            g_audioContexts[jsCtx.ptr] = std::move(context);
+                                                       auto jsCtx = createAudioContextJS(g_jsEngine, ctxPtr);
+                                                       g_audioContexts[jsCtx.ptr] = std::move(context);
 
-            return jsCtx;
-        }
-    );
+                                                       return jsCtx;
+                                                   });
 
     engine->setGlobalProperty("AudioContext", audioContextCtor);
 

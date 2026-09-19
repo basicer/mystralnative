@@ -456,6 +456,18 @@ public:
         return {stored, context_};
     }
 
+    JSValueHandle newConstructor(const char* name, NativeFunction fn) override {
+        auto constructor = newFunction(name, fn);
+        JSValue function = *static_cast<JSValue*>(constructor.ptr);
+        JS_SetConstructorBit(context_, function, true);
+        JSValue prototype = JS_NewObject(context_);
+        JS_SetConstructor(context_, function, prototype);
+        JS_FreeValue(context_, prototype);
+        JS_DefinePropertyValueStr(context_, function, "name", JS_NewString(context_, name),
+                                  JS_PROP_CONFIGURABLE);
+        return constructor;
+    }
+
     // ========================================================================
     // Value Conversion
     // ========================================================================

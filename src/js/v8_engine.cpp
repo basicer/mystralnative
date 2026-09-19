@@ -568,6 +568,17 @@ public:
         return {persistent, isolate_};
     }
 
+    JSValueHandle newConstructor(const char* name, NativeFunction fn) override {
+        // Function::New defaults to ConstructorBehavior::kAllow.
+        auto constructor = newFunction(name, fn);
+        v8::Isolate::Scope isolate_scope(isolate_);
+        v8::HandleScope handle_scope(isolate_);
+        auto* persistent = static_cast<v8::Persistent<v8::Value>*>(constructor.ptr);
+        persistent->Get(isolate_).As<v8::Function>()->SetName(
+            v8::String::NewFromUtf8(isolate_, name).ToLocalChecked());
+        return constructor;
+    }
+
     // ========================================================================
     // Value Conversion
     // ========================================================================

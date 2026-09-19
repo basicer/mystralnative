@@ -359,6 +359,18 @@ public:
         return {(void*)funcObj, context_};
     }
 
+    JSValueHandle newConstructor(const char* name, NativeFunction fn) override {
+        JSObjectRef constructor = JSObjectMakeConstructor(context_, nullptr, &nativeConstructorCallback);
+        g_nativeFunctions[(void*)constructor] = fn;
+        JSStringRef nameKey = JSStringCreateWithUTF8CString("name");
+        JSStringRef nameValue = JSStringCreateWithUTF8CString(name);
+        JSObjectSetProperty(context_, constructor, nameKey, JSValueMakeString(context_, nameValue),
+                            kJSPropertyAttributeReadOnly | kJSPropertyAttributeDontEnum, nullptr);
+        JSStringRelease(nameValue);
+        JSStringRelease(nameKey);
+        return {(void*)constructor, context_};
+    }
+
     // ========================================================================
     // Value Conversion
     // ========================================================================
@@ -614,6 +626,21 @@ private:
     void reportException(JSValueRef exception) {
         std::string msg = toString({(void*)exception, context_});
         std::cerr << "[JSC] Error: " << msg << std::endl;
+    }
+
+    static JSObjectRef nativeConstructorCallback(JSContextRef ctx, JSObjectRef constructor,
+                                                 size_t argumentCount, const JSValueRef arguments[],
+                                                 JSValueRef* exception) {
+        JSValueRef result = nativeCallback(ctx, constructor, nullptr, argumentCount, arguments, exception);
+        if (*exception) return nullptr;
+        if (!result || !JSValueIsObject(ctx, result)) {
+            JSStringRef message = JSStringCreateWithUTF8CString("Native constructor must return an object");
+            JSValueRef value = JSValueMakeString(ctx, message);
+            JSStringRelease(message);
+            *exception = JSObjectMakeError(ctx, 1, &value, nullptr);
+            return nullptr;
+        }
+        return JSValueToObject(ctx, result, exception);
     }
 
     static JSValueRef nativeCallback(JSContextRef ctx, JSObjectRef function,

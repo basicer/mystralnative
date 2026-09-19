@@ -182,6 +182,14 @@ public:
      */
     virtual JSValueHandle newFunction(const char* name, NativeFunction fn) = 0;
 
+    /**
+     * Create a native constructor usable with `new` in every engine.
+     * The callback receives the constructor arguments and must return an object.
+     * That object is returned as-is; its prototype is not rewritten. Calling
+     * without `new` is not part of this API's cross-engine contract.
+     */
+    virtual JSValueHandle newConstructor(const char* name, NativeFunction fn) = 0;
+
     // ========================================================================
     // Value Conversion
     // ========================================================================
