@@ -413,12 +413,72 @@ if(MYSTRAL_USE_DAWN)
         endif()
     endif()
 
+    # V8 and Dawn both bundle Abseil. Seal Dawn's copy into a private ABI
+    # namespace before creating the imported target, rather than relying on
+    # link order or duplicate-symbol suppression. This must happen here so all
+    # downstream targets link the generated archive rather than the original.
+    set(DAWN_SEAL_TARGET "")
+    if(DAWN_FOUND AND MYSTRAL_USE_V8)
+        get_filename_component(DAWN_LIBRARY_EXTENSION "${DAWN_LIBRARY}" LAST_EXT)
+        if(NOT DAWN_LIBRARY_EXTENSION STREQUAL ".a" AND NOT DAWN_LIBRARY_EXTENSION STREQUAL ".lib")
+            message(FATAL_ERROR
+                "MYSTRAL_USE_V8 and MYSTRAL_USE_DAWN require a static Dawn archive so its "
+                "bundled Abseil symbols can be sealed. Found: ${DAWN_LIBRARY}")
+        endif()
+
+        find_program(MYSTRAL_NODE_EXECUTABLE NAMES node nodejs)
+        if(NOT MYSTRAL_NODE_EXECUTABLE)
+            message(FATAL_ERROR
+                "Node.js is required to seal Dawn when MYSTRAL_USE_V8 and MYSTRAL_USE_DAWN are enabled")
+        endif()
+
+        set(MYSTRAL_LLVM_TOOL_HINTS
+            "$ENV{LLVM_ROOT}/bin"
+            "/opt/homebrew/opt/llvm/bin"
+            "/usr/local/opt/llvm/bin"
+        )
+        find_program(MYSTRAL_LLVM_OBJCOPY NAMES llvm-objcopy HINTS ${MYSTRAL_LLVM_TOOL_HINTS})
+        if(NOT MYSTRAL_LLVM_OBJCOPY)
+            message(FATAL_ERROR
+                "llvm-objcopy is required to seal Dawn when MYSTRAL_USE_V8 and MYSTRAL_USE_DAWN are enabled")
+        endif()
+        find_program(MYSTRAL_NM_EXECUTABLE NAMES llvm-nm nm HINTS ${MYSTRAL_LLVM_TOOL_HINTS})
+        if(NOT MYSTRAL_NM_EXECUTABLE)
+            message(FATAL_ERROR
+                "nm is required to seal Dawn when MYSTRAL_USE_V8 and MYSTRAL_USE_DAWN are enabled")
+        endif()
+
+        get_filename_component(DAWN_LIBRARY_STEM "${DAWN_LIBRARY}" NAME_WE)
+        set(DAWN_SEALED_LIBRARY
+            "${CMAKE_CURRENT_BINARY_DIR}/generated/dawn/${DAWN_LIBRARY_STEM}.sealed${DAWN_LIBRARY_EXTENSION}")
+        set(DAWN_SEAL_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/scripts/seal-dawn-absl.mjs")
+
+        add_custom_command(
+            OUTPUT "${DAWN_SEALED_LIBRARY}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated/dawn"
+            COMMAND ${CMAKE_COMMAND} -E env "LLVM_OBJCOPY=${MYSTRAL_LLVM_OBJCOPY}"
+                    "LLVM_NM=${MYSTRAL_NM_EXECUTABLE}"
+                    ${MYSTRAL_NODE_EXECUTABLE} "${DAWN_SEAL_SCRIPT}" "${DAWN_LIBRARY}"
+                    --output "${DAWN_SEALED_LIBRARY}" --force
+            DEPENDS "${DAWN_LIBRARY}" "${DAWN_SEAL_SCRIPT}"
+            COMMENT "Sealing Dawn's bundled Abseil symbols for V8 compatibility"
+            VERBATIM
+        )
+        add_custom_target(mystral-seal-dawn-absl DEPENDS "${DAWN_SEALED_LIBRARY}")
+        set(DAWN_LIBRARY "${DAWN_SEALED_LIBRARY}")
+        set(DAWN_SEAL_TARGET mystral-seal-dawn-absl)
+        message(STATUS "V8 + Dawn: Dawn will use sealed archive ${DAWN_SEALED_LIBRARY}")
+    endif()
+
     if(DAWN_FOUND)
         add_library(dawn::webgpu STATIC IMPORTED)
         set_target_properties(dawn::webgpu PROPERTIES
             IMPORTED_LOCATION "${DAWN_LIBRARY}"
             INTERFACE_INCLUDE_DIRECTORIES "${DAWN_INCLUDE_DIR}"
         )
+        if(DAWN_SEAL_TARGET)
+            add_dependencies(dawn::webgpu ${DAWN_SEAL_TARGET})
+        endif()
         # Only define MYSTRAL_WEBGPU_DAWN if wgpu-native wasn't already set up
         # (can't have both WebGPU backends active)
         if(NOT MYSTRAL_WEBGPU_BACKEND_SET)
@@ -1197,14 +1257,7 @@ if(MYSTRAL_USE_V8 AND TARGET v8::v8)
     else()
         target_compile_features(mystral-runtime PRIVATE cxx_std_20)
     endif()
-    # On macOS with Dawn, V8 is linked specially in the Dawn section with -force_load
-    # to handle Abseil symbol conflicts. Skip normal linking here but keep include dirs.
-    if(APPLE AND MYSTRAL_USE_DAWN)
-        # Only add include directories, actual linking happens in Dawn section
-        target_include_directories(mystral-runtime PRIVATE ${V8_INCLUDE_DIR})
-    else()
-        target_link_libraries(mystral-runtime PRIVATE v8::v8)
-    endif()
+    target_link_libraries(mystral-runtime PRIVATE v8::v8)
     if(APPLE)
         target_link_libraries(mystral-runtime PRIVATE ${COREFOUNDATION_FRAMEWORK})
     elseif(V8_SYSTEM_LIBS)
@@ -1252,23 +1305,7 @@ if(MYSTRAL_USE_WGPU AND TARGET wgpu::wgpu)
 endif()
 
 if(MYSTRAL_USE_DAWN AND TARGET dawn::webgpu)
-    # Dawn and V8 both include Abseil library, causing duplicate symbol errors.
-    # On macOS, we need to handle the link order and flags carefully.
-    if(APPLE AND MYSTRAL_USE_V8)
-        # Use -force_load for V8 to ensure its Abseil symbols are loaded first,
-        # then link Dawn normally. The linker will use the first definition.
-        # We also suppress the deprecated -ld_classic warning and use -dead_strip
-        # to remove unused duplicate symbols.
-        get_target_property(V8_LOCATION v8::v8 IMPORTED_LOCATION)
-        target_link_libraries(mystral-runtime PRIVATE
-            "-Wl,-force_load,${V8_LOCATION}"
-        )
-        # Link Dawn after V8 - its duplicate symbols will be ignored
-        target_link_libraries(mystral-runtime PRIVATE dawn::webgpu)
-        target_link_options(mystral-runtime PUBLIC "-Wl,-dead_strip")
-    else()
-        target_link_libraries(mystral-runtime PRIVATE dawn::webgpu)
-    endif()
+    target_link_libraries(mystral-runtime PRIVATE dawn::webgpu)
 
     # Dawn requires additional dependencies
     if(APPLE)
@@ -1281,17 +1318,6 @@ if(MYSTRAL_USE_DAWN AND TARGET dawn::webgpu)
         # OneCoreUap.lib is the umbrella library for Windows 10+ APIs that includes
         # all the necessary API sets. It's always available in the Windows SDK.
         target_link_libraries(mystral-runtime PUBLIC OneCoreUap.lib)
-        # Dawn and V8 both include Abseil library, causing duplicate symbol errors.
-        # Use /FORCE:MULTIPLE to ignore duplicate definitions on MSVC.
-        if(MYSTRAL_USE_V8)
-            target_link_options(mystral-runtime PUBLIC "/FORCE:MULTIPLE")
-        endif()
-    elseif(UNIX)
-        # Dawn and V8 both include Abseil library, causing multiple definition errors.
-        # Allow multiple definitions to resolve this conflict.
-        if(MYSTRAL_USE_V8)
-            target_link_options(mystral-runtime PUBLIC "-Wl,--allow-multiple-definition")
-        endif()
     endif()
     # Note: Linux Dawn builds require Ubuntu 24.04+ (GCC 13+) for proper libstdc++ ABI
 endif()
@@ -1463,12 +1489,15 @@ if(NOT MYSTRAL_PLATFORM STREQUAL "ios" AND NOT MYSTRAL_PLATFORM STREQUAL "androi
 
     # On Linux, the GNU linker needs help finding zlib (curl's transitive dependency).
     # Use --copy-dt-needed-entries to pull in dependencies from shared libraries.
-    # Also allow multiple definitions because wgpu-native and swc both contain Rust runtime symbols.
     if(UNIX AND NOT APPLE)
         target_link_options(mystral PRIVATE
             "LINKER:--copy-dt-needed-entries"
-            "LINKER:--allow-multiple-definition"
         )
+        # The V8 + Dawn path seals Abseil, so duplicate definitions must remain
+        # link errors rather than being silently accepted.
+        if(NOT (MYSTRAL_USE_V8 AND MYSTRAL_USE_DAWN))
+            target_link_options(mystral PRIVATE "LINKER:--allow-multiple-definition")
+        endif()
     endif()
 
     # Install CLI to bin directory
@@ -1495,12 +1524,13 @@ if(NOT MYSTRAL_PLATFORM STREQUAL "ios" AND NOT MYSTRAL_PLATFORM STREQUAL "androi
     endif()
 
     # On Linux, the GNU linker needs help finding zlib (curl's transitive dependency).
-    # Also allow multiple definitions because wgpu-native and swc both contain Rust runtime symbols.
     if(UNIX AND NOT APPLE)
         target_link_options(embed-example PRIVATE
             "LINKER:--copy-dt-needed-entries"
-            "LINKER:--allow-multiple-definition"
         )
+        if(NOT (MYSTRAL_USE_V8 AND MYSTRAL_USE_DAWN))
+            target_link_options(embed-example PRIVATE "LINKER:--allow-multiple-definition")
+        endif()
     endif()
 endif()
 
